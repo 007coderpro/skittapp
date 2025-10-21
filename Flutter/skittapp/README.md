@@ -1,24 +1,5 @@
 # skittapp
 
-Flutter app generated with `flutter create skittapp`.
-
-Purpose: demo / school project for audio/guitar tuning features.
-
-How to run
-
-1. Ensure Flutter is installed and configured (macOS: Xcode, Android SDK as needed).
-2. From this directory run:
-
-```bash
-flutter pub get
-flutter run
-```
-
-Notes
-
-- This repository was prepared for initial GitHub push. It includes a recommended `.gitignore` and an MIT license.
-# skittapp
-
 A new Flutter project.
 
 ## Getting Started

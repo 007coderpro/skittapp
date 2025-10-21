@@ -1,32 +1,3 @@
-# Flutter/Dart default ignores
-.dart_tool/
-/.packages
-/.flutter-plugins
-/.flutter-plugins-dependencies
-build/
-.pub-cache/
-pubspec.lock
-ios/Flutter/Flutter.framework
-ios/Flutter/Flutter.podspec
-ios/Flutter/Generated.xcconfig
-.idea/
-*.iml
-.vscode/
-*.log
-*.tmp
-*.swp
-
-# Mac
-.DS_Store
-
-# Android
-**/local.properties
-**/*.keystore
-
-# Xcode
-*.xcworkspace
-xcuserdata/
-DerivedData/
 # Miscellaneous
 *.class
 *.log
