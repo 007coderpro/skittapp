@@ -1,0 +1,20 @@
+Kannattaa tehdä SSH githubin kanssa tälle kansiolle.
+Chattis osaa auttaa tässä kohtaa hyvin.
+
+Terminaalissa pääseminen kansioon esimerkiksi näin.
+
+cd Documents/skittapp
+
+Kun olet kansiossa suorita seuraava komento (oletuksena, että ssh tehty):
+
+git pull
+
+Tällöin saat automaattisesti viimesimmän version.
+
+Kun olet tehnyt muutokset haluaamaasi tiedostoon suorita komento oikeassa kansiossa. (cd <kansio>)
+
+git add <teidostonnimi> 
+git commit -m "Tähän kirjoita mitä muutoksia teit"
+git push
+
+Tällöin kaikki saavat viimeisimmän version githubiin.
