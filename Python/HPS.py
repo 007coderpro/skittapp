@@ -204,5 +204,5 @@ Jotta pitch_service_... pystyy käyttämään sitä luokkaa
 from HPS import process_signal
 result = process_signal(x, sr) tyylisesti
 """
-
+# Tähän siis hps(...) niin pitäisi palauttaa tähän kohtaan tuloksen.
 
