@@ -1,157 +1,142 @@
 import 'package:flutter/material.dart';
-import '../../../core/audio/audio_recorder.dart';
-import '../../../core/ipc/python_bridge_http.dart';
-import '../application/tuner_controller.dart';
 import 'widgets/needle_gauge.dart';
-import 'widgets/level_meter.dart';
 
 /// Tuner-näkymä: mittari + nuotti
 class TunerPage extends StatefulWidget {
-  const TunerPage({super.key});
+  const TunerPage({Key? key}) : super(key: key);
 
   @override
   State<TunerPage> createState() => _TunerPageState();
 }
 
 class _TunerPageState extends State<TunerPage> {
-  late TunerController _controller;
-  bool _isRecording = false;
+// update this as your audio/pitch changes
+  double _cents = 0.0; // tuning offset in cents
+  double _confidence = 0.0; // detection confidence (0.0 - 1.0)
+  String? _selectedId; // currently selected/toggled button
 
-  @override
-  void initState() {
-    super.initState();
-    
-    // Luo controller HTTP-sillalla (voit vaihtaa stdio-versioon)
-    final recorder = AudioRecorderService(
-      sampleRate: 48000,
-      channels: 1,
-      samplesPerFrame: 4096,
+  Widget _tuningButton({
+    required Alignment alignment,
+    required String id,
+    required String label,
+    VoidCallback? onPressed,
+  }) {
+    return Align(
+      alignment: alignment,
+      child: SizedBox(
+        width: 42,
+        height: 42,
+        child: ElevatedButton(
+          onPressed: () {
+            setState(() {
+              if (_selectedId == id) {
+                _selectedId = null;
+              } else {
+                _selectedId = id;
+              }
+            });
+            if (onPressed != null) onPressed();
+          },
+          style: ElevatedButton.styleFrom(
+            shape: const CircleBorder(),
+            padding: EdgeInsets.zero,
+            backgroundColor: _selectedId == id ? Colors.grey[800] : Colors.white,
+            foregroundColor: _selectedId == id ? Colors.white : Colors.black,
+            elevation: 4,
+          ),
+          child: Text(label, style: const TextStyle(fontSize: 14)),
+        ),
+      ),
     );
-    final bridge = PythonBridgeHttp('http://127.0.0.1:8000');
-    
-    _controller = TunerController(recorder: recorder, bridge: bridge);
-    _controller.addListener(() {
-      setState(() {}); // Päivitä UI kun data muuttuu
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  Future<void> _toggleRecording() async {
-    if (_isRecording) {
-      await _controller.stop();
-      setState(() => _isRecording = false);
-    } else {
-      try {
-        await _controller.start();
-        setState(() => _isRecording = true);
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Virhe: $e')),
-          );
-        }
-      }
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Kitaraviritys'),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Nuotti ja taajuus
-              if (_controller.lastNote != null) ...[
-                Text(
-                  _controller.lastNote!,
-                  style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${_controller.lastF0?.toStringAsFixed(2) ?? '--'} Hz',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 24),
-              ] else ...[
-                Text(
-                  '--',
-                  style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _isRecording ? 'Kuunnellaan...' : 'Soita nuotti',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        color: Colors.grey,
-                      ),
-                ),
-                const SizedBox(height: 24),
-              ],
+      appBar: AppBar(title: const Text('Tuner')),
+      body: Column(
+        children: [
+          // push content down so gauge and image sit lower
+          Spacer(flex: 2),
 
-              // RMS-taso (placeholder-metriikka)
-              if (_isRecording) ...[
-                Text(
-                  'RMS: ${(_controller.lastRms * 100).toStringAsFixed(1)}%',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 16),
-              ],
-
-              // Neulakello
-              Expanded(
-                child: Center(
-                  child: NeedleGauge(
-                    cents: _controller.lastCents ?? 0.0,
-                    confidence: _controller.lastConfidence,
-                  ),
-                ),
+          // NEEDLE GAUGE (lower on page)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: SizedBox(
+              height: 140,
+              width: double.infinity,
+              child: NeedleGauge(
+                cents: _cents,
+                confidence: _confidence,
               ),
-
-              const SizedBox(height: 24),
-
-              // Äänenvoimakkuusmittari
-              LevelMeter(level: _controller.lastRms),
-
-              const SizedBox(height: 32),
-
-              // Aloita/Lopeta -painike
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _toggleRecording,
-                  icon: Icon(
-                    _isRecording ? Icons.stop : Icons.mic,
-                  ),
-                  label: Text(
-                    _isRecording ? 'Lopeta' : 'Aloita viritys',
-                    style: const TextStyle(fontSize: 18),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+
+          // image + buttons area
+          Spacer(flex: 1),
+
+          SizedBox(
+            height: 380, // increase area to accommodate bigger image
+            width: double.infinity,
+            child: Center(
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Bigger guitar image
+                  Image.asset(
+                    'assets/images/kitara.png',
+                    width: 320,
+                    height: 320,
+                    fit: BoxFit.contain,
+                  ),
+
+                  // LEFT column: top->down D, A, E
+                  _tuningButton(
+                    alignment: const Alignment(-0.8, -0.7), // top-left
+                    id: 'D',
+                    label: 'D',
+                    onPressed: () => debugPrint('D pressed'),
+                  ),
+                  _tuningButton(
+                    alignment: const Alignment(-0.8, -0.3), // middle-left
+                    id: 'A',
+                    label: 'A',
+                    onPressed: () => debugPrint('A pressed'),
+                  ),
+                  _tuningButton(
+                    alignment: const Alignment(-0.8, 0.1), // bottom-left
+                    id: 'E_low',
+                    label: 'E',
+                    onPressed: () => debugPrint('E pressed'),
+                  ),
+
+                  // RIGHT column: top->down G, B, E
+                  _tuningButton(
+                    alignment: const Alignment(0.8, -0.7), // top-right
+                    id: 'G',
+                    label: 'G',
+                    onPressed: () => debugPrint('G pressed'),
+                  ),
+                  _tuningButton(
+                    alignment: const Alignment(0.8, -0.3), // middle-right
+                    id: 'B',
+                    label: 'B',
+                    onPressed: () => debugPrint('B pressed'),
+                  ),
+                  _tuningButton(
+                    alignment: const Alignment(0.8, 0.1), // bottom-right
+                    id: 'E_high',
+                    label: 'E',
+                    onPressed: () => debugPrint('E (high) pressed'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+        ],
       ),
     );
   }
 }
-
