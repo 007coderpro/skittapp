@@ -15,6 +15,25 @@ class _TunerPageState extends State<TunerPage> {
   double _confidence = 0.0; // detection confidence (0.0 - 1.0)
   String? _selectedId; // currently selected/toggled button
 
+  // frequency info for display
+  final Map<String, double> _stringFreq = {
+    'E_high': 329.63, // E4
+    'B': 246.94,      // B3
+    'G': 196.00,      // G3
+    'D': 146.83,      // D3
+    'A': 110.00,      // A2
+    'E_low': 82.41,   // E2
+  };
+
+  final Map<String, String> _stringLabel = {
+    'E_high': 'E',
+    'B': 'B',
+    'G': 'G',
+    'D': 'D',
+    'A': 'A',
+    'E_low': 'E',
+  };
+
   Widget _tuningButton({
     required Alignment alignment,
     required String id,
@@ -89,6 +108,20 @@ class _TunerPageState extends State<TunerPage> {
                     height: 320,
                     fit: BoxFit.contain,
                   ),
+
+                  // Selected string frequency text (left side, between gauge and image)
+                  if (_selectedId != null)
+                    Align(
+                      alignment: const Alignment(-0.8, -1.2),
+                      child: Text(
+                        '${_stringLabel[_selectedId] ?? ''} = ${_stringFreq[_selectedId]!.round()} Hz',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).textTheme.bodyLarge?.color ?? Colors.black,
+                        ),
+                      ),
+                    ),
 
                   // LEFT column: top->down D, A, E
                   _tuningButton(
