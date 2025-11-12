@@ -2,7 +2,7 @@ import numpy as np
 import sounddevice as sd
 
 # Taajuusresoluutio = sample_rate / window_length eli noin 3Hz välein 
-samp = 48000  # Näytteenottotaajuus
+samp = 44100  # Näytteenottotaajuus
 windowlen = 4096 * 4  # Ikkunan pituus (näytteitä)
 
 ###################################################################
@@ -56,7 +56,7 @@ def audio_callback(indata, frames, time, status):
     
     # Process with HPS
     if db_level > -30:  # Threshold to avoid noise
-        f0 = HPS_f0_frame(audio_data.flatten(), sample_rate=48000)
+        f0 = HPS_f0_frame(audio_data.flatten(), sample_rate=44100)
         print(f"F0: {f0:.2f} Hz | dB: {db_level:.1f}", end='\r')
 '''
         # Add to history for smoothing
@@ -77,8 +77,8 @@ def audio_callback(indata, frames, time, status):
 try:
     with sd.InputStream(callback=audio_callback, 
                         channels=1, # Mono-kanava
-                        samplerate=48000, # Mikrofonin näytteenottotaajuus
-                        blocksize=4096): # Näyte 85 ms välein (4096/48000)
+                        samplerate=44100, # Mikrofonin näytteenottotaajuus
+                        blocksize=4096): # Näyte 85 ms välein (4096/44100)
         sd.sleep(100000)  # Pyöritä ohjelmaa 100 sekuntia
 except KeyboardInterrupt:
     print("\n\n✓ Stopped")

@@ -37,11 +37,12 @@ class _NeedleGaugePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height * 0.8);
     final radius = size.width * 0.4;
+    const arcStroke = 10.0; // use one stroke width everywhere
 
     // Tausta-arc
     final arcPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 8
+      ..strokeWidth = arcStroke
       ..color = Colors.grey.shade300;
 
     canvas.drawArc(
@@ -55,7 +56,7 @@ class _NeedleGaugePainter extends CustomPainter {
     // Värillinen arc (vihreä keskellä, punainen reunoilla)
     final coloredArcPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 8;
+      ..strokeWidth = arcStroke;
 
     // Piirrä värisegmentit
     final segments = 20;
@@ -89,8 +90,14 @@ class _NeedleGaugePainter extends CustomPainter {
 
     // Neula
     if (confidence > 0.3) {
-      final needleAngle = math.pi + (cents / 100 * math.pi);
-      final needleLength = radius - 20;
+      // Map [-50, +50] cents onto [π, 2π] semicircle with 0 at 1.5π (straight up)
+      // cents = -50 → angle = π (left)
+      // cents = 0   → angle = 1.5π (up)
+      // cents = +50 → angle = 2π (right)
+      final needleAngle = 1.5 * math.pi + (cents / 50.0) * 0.5 * math.pi;
+      
+      // Make the tip land close to the arc edge (leave tiny 2px margin)
+      final needleLength = radius - arcStroke / 2 - 2;
 
       final needlePaint = Paint()
         ..color = Colors.red
@@ -104,8 +111,8 @@ class _NeedleGaugePainter extends CustomPainter {
 
       canvas.drawLine(center, needleEnd, needlePaint);
 
-      // Neulan keskipiste
-      canvas.drawCircle(center, 8, Paint()..color = Colors.red.shade700);
+      // Dot at the TIP (not at the center)
+      canvas.drawCircle(needleEnd, 6, Paint()..color = Colors.red.shade700);
     }
 
     // Tekstit: -50, 0, +50

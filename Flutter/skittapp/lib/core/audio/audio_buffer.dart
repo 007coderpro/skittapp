@@ -11,7 +11,7 @@ class AudioBuffer {
 
   AudioBuffer({
     required this.frameSize,
-    this.sampleRate = 48000,
+    this.sampleRate = 44100,
   }) : _frameController = StreamController<Float32List>.broadcast();
 
   /// Lisää PCM16-dataa puskuriin

@@ -38,6 +38,7 @@ dependencies:
   # Audio
   record: ^6.1.2           # mikistä PCM
   permission_handler: ^12.0.1
+  fftea: ^1.5.0+1          # kevyt FFT HPS-algoritmille
   
   # State management
   flutter_riverpod: ^2.5.1

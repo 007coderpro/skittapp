@@ -47,7 +47,7 @@ curl http://127.0.0.1:8000/health
 # Testaa process_frame (dummy data)
 curl -X POST http://127.0.0.1:8000/process_frame \
   -H "Content-Type: application/json" \
-  -d '{"sr": 48000, "data_b64": "AAAA"}'
+  -d '{"sr": 44100, "data_b64": "AAAA"}'
 ```
 
 **STDIO (manuaalinen testaus):**
@@ -59,7 +59,7 @@ python3 pitch_service_stdio.py
 Kirjoita terminaaliin:
 
 ```json
-{"sr": 48000, "data_b64": "AAAA"}
+{"sr": 44100, "data_b64": "AAAA"}
 ```
 
 Paina Enter → saat JSON-vastauksen
@@ -82,7 +82,7 @@ Lopeta:
 Request body:
 ```json
 {
-  "sr": 48000,
+  "sr": 44100,
   "data_b64": "base64-encoded PCM16 data"
 }
 ```
@@ -102,7 +102,7 @@ Response:
 
 **Input (JSON line):**
 ```json
-{"sr": 48000, "data_b64": "..."}
+{"sr": 44100, "data_b64": "..."}
 ```
 
 **Output (JSON line):**

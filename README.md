@@ -1,36 +1,34 @@
 # KitaranViritys
 
-Sovellus äänen- ja puheenkäsittelyyn / kitaran viritykseen.
+Sovellus äänen- ja puheenkäsittelyyn / kitaran viritykseen. Hybridipohjainen taajuus-/aikatasopitchdetector toteutettu Dartilla.
 
 ## Projektin rakenne
 
 ```
-Flutter/skittapp/          # Flutter-sovellus (UI + äänenkaappaus)
+Flutter/skittapp/          # Flutter-sovellus
   lib/
     core/
       audio/
         audio_recorder.dart      # PCM16-kehysten kaappaus mikrofonista
-      ipc/
-        python_bridge.dart       # Abstrakti rajapinta
-        python_bridge_http.dart  # HTTP-yhteys (FastAPI)
-        python_bridge_stdio.dart # STDIO-yhteys (prosessi)
+      models/
+        pitch_result.dart        # Pitch-detektorin tulosrakenne
     features/
       tuner/
         presentation/
-          tuner_page.dart        # Päänäkymä
+          tuner_page.dart        # Päänäkymä (UI-logiikka, EMA-smoothing)
           widgets/               # Mittarit ja visualisoinnit
         application/
-          tuner_controller.dart  # ChangeNotifier-pohjainen controller
+          pitch_engine.dart      # HPS/THS/MPM-pitchdetektori
         domain/                  # Tilat ja presetit
-    utils/                       # Apuluokat
+    utils/                       # Apuluokat (logger, throttler)
     app/                         # App wrapper
     main.dart                    # Entry point
+  PITCH_ENGINE_EXPLAINED.md    # Algoritmin dokumentaatio
 
-Python/                    # Python-palvelimet (placeholder)
-  pitch_service_http.py    # FastAPI HTTP-palvelin
-  pitch_service_stdio.py   # STDIO-versio
-  requirements.txt         # Python-riippuvuudet
-  README.md                # Python-ohjeet
+Python/                    # Vanhat Python-palvelimet (ei enää käytössä)
+  HPS.py, HPS_real.py, HPS_file.py  # Alkuperäiset Python-prototyypit
+  pitch_service_*.py                # Vanhat IPC-palvelimet
+  requirements.txt, README.md
 ```
 
 ## Arkkitehtuuri
@@ -38,26 +36,39 @@ Python/                    # Python-palvelimet (placeholder)
 ### Audio Pipeline
 
 1. **AudioRecorderService** kaappaa mikrofonista PCM16-dataa (48 kHz, mono)
-2. Puskuroi tasapituisiksi kehyksiksi (esim. 4096 näytettä = ~85 ms)
-3. **TunerController** lähettää kehykset **PythonBridge**:lle
-4. Python-palvelu analysoi ja palauttaa tuloksen (f0, RMS, jne.)
-5. UI päivittyy ChangeNotifier-patternilla
+2. Puskuroi tasapituisiksi kehyksiksi (4096 näytettä = ~85 ms)
+3. **TunerPage** lähettää kehykset **HpsPitchEngine**:lle (Dart)
+4. Pitch-moottori analysoi ja palauttaa tuloksen (f0, cents, confidence)
+5. UI päivittyy attack hold + EMA-smoothing -logiikalla
 
-### Python-sillat
+### Pitch Detection Engine (Dart)
 
-- **PythonBridgeHttp**: HTTP REST API (kehitys/testaus)
-  - Käynnistä: `python3 Python/pitch_service_http.py`
-  - Endpoint: `http://127.0.0.1:8000/process_frame`
+**HpsPitchEngine** toteuttaa hybridipohjaisen f0-estimoinnin:
 
-- **PythonBridgeStdio**: Prosessi-IPC (tuotanto)
-  - Käynnistä: `python3 Python/pitch_service_stdio.py`
-  - JSON-rivit stdin/stdout-kommunikaatio
+#### Auto Mode (ei nappia painettuna)
+- **HPS (Harmonic Product Spectrum)**: 50–1000 Hz laaja haku
+- Kertoo spektrit (orders 2–5) → korostaa harmoniset
+- Parabolic refinement (QIFFT) → sub-bin tarkkuus
 
-### Placeholder-tila
+#### Pressed Mode (kielipainike aktiivinen)
+- **THS (Targeted Harmonic Sum)**: ±120 centtiä kohteen ympärillä
+- 1/k harmoninen painotus + local median whitening
+- 121 kandidaatin grid search (2 centin askelilla)
+- **MPM (McLeod Pitch Method)** fallback heikoille signaaleille
+  - NSDF aikatasossa kun THS conf < 0.45
+  - Blendaa 60% THS + 40% MPM tarvittaessa
+- Octave guard: testaa 2× ja 0.5× frekvensseillä
 
-Tällä hetkellä Python-palvelimet palauttavat vain:
-- **RMS**: Äänenvoimakkuustaso
-- Muut kentät (f0, note, cents): null/placeholder
+#### Smoothing (UI-taso)
+- **Attack hold**: 150 ms jäädytys kun RMS hyppää >6 dB
+- **EMA-smoothing**: α ≈ 0.22 (~200 ms aikavakio)
+- Display gate: näytä vain kun conf ≥ 0.55
+
+**Tarkkuus**:
+- Auto mode: ±0.3–0.6 Hz (≈±6–12¢ @ E2)
+- Pressed mode: tyypillisesti ≤±5¢ ~300 ms jälkeen (sub-cent mahdollinen puhtaalla signaalilla)
+
+Katso tarkempi selitys: [`PITCH_ENGINE_EXPLAINED.md`](Flutter/skittapp/PITCH_ENGINE_EXPLAINED.md)
 
 ## Käyttöönotto
 
@@ -68,29 +79,14 @@ cd Flutter/skittapp
 flutter pub get
 ```
 
-### 2. Python-palvelin (valinnainen testaus)
-
-```bash
-cd Python
-pip install -r requirements.txt
-
-# HTTP-versio
-python3 pitch_service_http.py
-
-# TAI stdio-versio
-python3 pitch_service_stdio.py
-```
-
-### 3. Aja Flutter-sovellus
+### 2. Aja Flutter-sovellus
 
 ```bash
 cd Flutter/skittapp
 flutter run
 ```
 
-**Huom:** 
-- HTTP-versio edellyttää että `pitch_service_http.py` on käynnissä
-- Voit vaihtaa stdio-versioon muuttamalla `TunerPage`:n `initState`-metodissa bridge-tyyppiä
+**Huom:** Python ei enää tarvita – kaikki DSP-logiikka on toteutettu Dartilla (`pitch_engine.dart`)
 
 ## Platform-oikeudet
 
@@ -98,28 +94,44 @@ flutter run
 - **iOS**: `NSMicrophoneUsageDescription` (Info.plist) ✅
 - **macOS**: `com.apple.security.device.microphone` (entitlements) ✅
 
+## Toteutetut ominaisuudet
+
+1. ✅ Audio-puskurointi ja kehysten lähetys (48 kHz, mono, 4096 samples)
+2. ✅ HPS-pitchdetektori (auto mode: 50–1000 Hz)
+3. ✅ THS-pitchdetektori (pressed mode: ±120¢ kohteen ympärillä)
+4. ✅ MPM time-domain fallback heikoille signaaleille
+5. ✅ Nuotintunnistus ja cents-laskenta
+6. ✅ Octave guard (2×/0.5× testaus)
+7. ✅ Attack hold (150 ms) + EMA-smoothing (α=0.22)
+8. ✅ UI: NeedleGauge, kielipainikkeet, confidence-gating
+
 ## Seuraavat vaiheet
 
-1. ✅ Audio-puskurointi ja kehysten lähetys
-2. ✅ Python HTTP/STDIO-sillat placeholder-datalla
-3. ⬜ Toteuta oikea f0-estimointi (CREPE, YIN, pYIN)
-4. ⬜ Nuotintunnistus ja cents-laskenta
-5. ⬜ UI-parannukset ja visualisoinnit
-6. ⬜ PyInstaller-bundle tuotantoon (stdio)
+- ⬜ Lisää spektri/waveform-visualisoinnit
+- ⬜ Tallenna virityspresettejä
+- ⬜ Lisää vaihtoehtoisia viritysjärjestelmiä (Drop D, DADGAD, jne.)
+- ⬜ Optimoi suorituskyky (profiloi FFT/THS/MPM-ajat)
+- ⬜ Lisää unit-testit pitch_engine.dart:lle
 
 ## Testaus
 
-### Placeholder HTTP-palvelimen testaus
+### Flutter-sovelluksen testaus
 
 ```bash
-# Käynnistä palvelin
-python3 Python/pitch_service_http.py
+cd Flutter/skittapp
+flutter run
+```
 
-# Toisessa terminaalissa: testaa
-curl http://127.0.0.1:8000/health
+1. Paina "Aloita viritys"
+2. Testaa **Auto Mode**: soita mikä tahansa nuotti → sovellus tunnistaa sen
+3. Testaa **Pressed Mode**: valitse kielipainike → soita kyseinen kieli → näet cents-eron
+4. Tarkkaile confidence-arvoa: vihreä (≥0.7), keltainen (0.55–0.7), punainen (<0.55)
 
-# Käynnistä Flutter-sovellus ja paina "Aloita viritys"
-# RMS-arvo päivittyy kun puhut/soitat
+### Pitch Engine -yksikkötestaus
+
+```bash
+cd Flutter/skittapp
+flutter test test/pitch_engine_test.dart  # (jos toteutettu)
 ```
 
 

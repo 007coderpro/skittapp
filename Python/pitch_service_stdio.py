@@ -4,7 +4,7 @@ STDIO-versio: lukee JSON-rivejä stdinistä, kirjoittaa vastaukset stdouttiin.
 Käynnistä: python3 pitch_service_stdio.py
 
 Protokolla:
-- Input: {"sr": 48000, "data_b64": "..."}
+- Input: {"sr": 44100, "data_b64": "..."}
 - Output: {"f0": null, "confidence": 0.0, "rms": 0.123, ...}
 - Quit: {"cmd": "quit"}
 """

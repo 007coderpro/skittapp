@@ -15,9 +15,9 @@ class AudioRecorderService {
   final int samplesPerFrame; // esim. 4096 → ~85 ms @ 48 kHz
 
   AudioRecorderService({
-    this.sampleRate = 48000,
+    this.sampleRate = 44100,
     this.channels = 1,
-    this.samplesPerFrame = 4096,
+    this.samplesPerFrame = 16384,
   });
 
   Stream<Uint8List> get frames => _framesCtrl!.stream;
