@@ -1,9 +1,10 @@
 import numpy as np
 import sounddevice as sd
+from collections import deque
 
-# Taajuusresoluutio = sample_rate / window_length eli noin 3Hz välein 
-samp = 44100  # Näytteenottotaajuus
-windowlen = 4096 * 4  # Ikkunan pituus (näytteitä)
+# Taajuusresoluutio = sample_rate / window_length eli noin 1Hz välein 
+samp = 48000  # Näytteenottotaajuus
+windowlen = 4096 *16  # Ikkunan pituus (näytteitä)
 
 ###################################################################
 # Reaaliaikainen f0-estimointi: yksi kehys kerrallaan
@@ -38,46 +39,59 @@ def HPS_f0_frame(frame, sample_rate = samp, window_length=windowlen, partials=5)
     # Etsitään huiput -> löydetään perustaajuusestimaatti
     peak_idx = np.argmax(hps_spec)
     f0 = freqs[peak_idx]
-    
+        
+    if f0 > 130:
+        target = f0 / 2
+        lower_idx = np.argmin(np.abs(freqs - target))
+
+        amp_main  = mag_spec[peak_idx]
+        amp_lower = mag_spec[lower_idx]
+        if amp_lower > 0.2 * amp_main:
+            f0 = freqs[lower_idx]
+
     return f0
 
 # Jos haluaa smoothingin, voi käyttää alla olevaa koodia (myös audio_callbackin sisällä)
-'''from collections import deque
-f0_history = deque(maxlen=5)  # Keep last 5 measurements'''
+
+f0_values = deque(maxlen=20)  # Keep last 20 measurements
+
+def smooth_f0(f0):
+    # Lisää uusi arvo historiaan
+    f0_values.append(f0)
+
+    # Tarvitaan vähintään 3 arvoa
+    if len(f0_values) < 3:
+        return f0 
+    
+    # Palauta mediaani kaikista arvoista
+    smoothed_f0 = np.median(f0_values)
+    return smoothed_f0
 
 
 def audio_callback(indata, frames, time, status):
     
     # Muunnetaan monoksi, jos stereo
     audio_data = indata[:, 0] if indata.ndim > 1 else indata
-
+    
     # Lasketaan dB-taso
     db_level = 20 * np.log10(np.sqrt(np.mean(audio_data**2)))
+    threshold = -30  # dB-taso, jonka alapuolella ei lasketa f0:aa
     
-    # Process with HPS
-    if db_level > -30:  # Threshold to avoid noise
-        f0 = HPS_f0_frame(audio_data.flatten(), sample_rate=44100)
-        print(f"F0: {f0:.2f} Hz | dB: {db_level:.1f}", end='\r')
-'''
-        # Add to history for smoothing
-        f0_history.append(f0)
+    # Lasketaan f0 vain, jos äänenvoimakkuus on riittävä
+    if db_level > threshold:
+        f0_raw = HPS_f0_frame(audio_data.flatten(), sample_rate=samp)
+        f0_smoothed = smooth_f0(f0_raw)  # Smoothataan
         
-        # Calculate median of recent values (more stable than mean)
-        if len(f0_history) >= 3:
-            smoothed_f0 = np.median(f0_history)
-            print(f"F0: {smoothed_f0:.2f} Hz | Raw: {f0:.2f} Hz | dB: {db_level:.1f}", end='\r')
-        else:
-            print(f"F0: {f0:.2f} Hz | dB: {db_level:.1f}", end='\r')
+        print(f"F0: {f0_smoothed:.2f} Hz | Raw: {f0_raw:.2f} Hz | dB: {db_level:.1f}", end='\r')
     else:
-        # Clear history when silent
-        f0_history.clear()
-        print(f"dB: {db_level:.1f} (too quiet)       ", end='\r')'''
+        f0_values.clear()  # Clear history when silent
+        print(f"dB: {db_level:.1f} (too quiet)       ", end='\r')
 
 # Aloitetaan äänitys
 try:
     with sd.InputStream(callback=audio_callback, 
                         channels=1, # Mono-kanava
-                        samplerate=44100, # Mikrofonin näytteenottotaajuus
+                        samplerate=48000, # Mikrofonin näytteenottotaajuus
                         blocksize=4096): # Näyte 85 ms välein (4096/44100)
         sd.sleep(100000)  # Pyöritä ohjelmaa 100 sekuntia
 except KeyboardInterrupt:
