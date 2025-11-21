@@ -5,7 +5,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:skittapp/core/audio/audio_recorder.dart';
-import 'package:skittapp/features/tuner/application/pitch_engine.dart';
+import 'package:skittapp/features/tuner/application/pitch_engine.dart' as adv;
+import 'package:skittapp/features/tuner/application/pitch_engine_python.dart'
+  as simple;
 import 'package:skittapp/features/tuner/application/debug.dart';
 
 import 'widgets/needle_gauge.dart';
@@ -18,9 +20,38 @@ class TunerPage extends StatefulWidget {
   State<TunerPage> createState() => _TunerPageState();
 }
 
+class _NoteAndCents {
+  final String name;
+  final double cents;
+  const _NoteAndCents(this.name, this.cents);
+}
+
+_NoteAndCents _freqToNote(double f) {
+  if (f <= 0 || !f.isFinite) {
+    return const _NoteAndCents('', 0);
+  }
+
+  const double a4 = 440.0;
+  final double midi = 69 + 12 * (math.log(f / a4) / math.ln2);
+  final int midiRounded = midi.round();
+  final double cents = (midi - midiRounded) * 100.0;
+
+  const List<String> noteNames = <String>[
+    'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B',
+  ];
+
+  final int noteIndex = ((midiRounded % 12) + 12) % 12;
+  final int octave = (midiRounded ~/ 12) - 1;
+  final String name = '${noteNames[noteIndex]}$octave';
+
+  return _NoteAndCents(name, cents);
+}
+
+enum PitchAlgo { simple, advanced }
+
 class _TunerPageState extends State<TunerPage> {
   // UI state
-  double _cents = 0.0;       // tuning offset (UI may lock to selected string)
+  double _hzDelta = 0.0;      // tuning offset in Hz (UI may lock to selected string)
   double _confidence = 0.0;  // 0.0 - 1.0
   String? _selectedId;       // currently selected/toggled string
   String? _lastSelectedId;   // to detect key change → reset smoother
@@ -31,7 +62,7 @@ class _TunerPageState extends State<TunerPage> {
   bool _permissionPermanentlyDenied = false;
 
   // Stage 3: Smoothing & attack hold
-  double _centsEma = 0.0;
+  double _hzDeltaEma = 0.0;
   bool _hasEma = false;
   DateTime? _attackUntil;
   double _prevRms = 0.0;
@@ -40,10 +71,15 @@ class _TunerPageState extends State<TunerPage> {
   DateTime? _noteStartTime; // when the current note was first pressed
   bool _hasLoggedForCurrentNote = false; // whether we've logged for this press
 
+  PitchAlgo _algo = PitchAlgo.advanced;
+
   late final AudioRecorderService _recorder;
   StreamSubscription<Uint8List>? _audioSub;
-  late final HpsPitchEngine _engine;
+  late final adv.HpsPitchEngine _advancedEngine;
+  late final simple.HPSPitchDetector _simpleEngine;
   PitchDebug? _lastDebug;
+  bool _isRecording = false;
+  Future<void>? _pendingStop;
 
   // Guitar standard tuning (Hz)
   final Map<String, double> _stringFreq = const {
@@ -75,7 +111,7 @@ class _TunerPageState extends State<TunerPage> {
     );
 
     // Engine with accuracy + debug
-    _engine = HpsPitchEngine(
+    _advancedEngine = adv.HpsPitchEngine(
       sampleRate: 48000,
       windowLength: 4096,
       hpsOrder: 5,
@@ -83,17 +119,21 @@ class _TunerPageState extends State<TunerPage> {
       maxF: 1000,
       levelDbGate: -45.0,
       smoothCount: 5,
-      padPow2: 2,          // x4 FFT → ~2.93 Hz bin spacing @ 48k/4096
-      preEmphasis: 0.97,   // stabilize spectral tilt
-      tiltAlpha: 0.5,      // enable tilt compensation (helps low-E bias)
-      sampleRateCorrection: 1.0, // set after quick 440 Hz calibration if needed
-      onDebug: _onEngineDebug,   // debug logging (structured)
+      padPow2: 2,
+      preEmphasis: 0.97,
+      tiltAlpha: 0.5,
+      sampleRateCorrection: 1.0,
+      onDebug: _onEngineDebug,
     );
 
-    unawaited(_startAudio());
+    _simpleEngine = simple.HPSPitchDetector();
   }
 
   Future<void> _startAudio() async {
+    if (_pendingStop != null) {
+      await _pendingStop;
+    }
+    if (_isRecording) return;
     try {
       final status = await Permission.microphone.request();
       if (!status.isGranted) {
@@ -101,6 +141,11 @@ class _TunerPageState extends State<TunerPage> {
         setState(() {
           _error = 'Mikrofonin käyttö on estetty. Salli se laitteen asetuksissa.';
           _permissionPermanentlyDenied = status.isPermanentlyDenied;
+          _selectedId = null;
+          _noteStartTime = null;
+          _hasLoggedForCurrentNote = false;
+          _hasEma = false;
+          _lastSelectedId = null;
         });
         return;
       }
@@ -109,26 +154,63 @@ class _TunerPageState extends State<TunerPage> {
       _audioSub = _recorder.frames.listen(
         _processFrame,
         onError: (Object err) {
+          unawaited(_stopAudio());
           if (!mounted) return;
           setState(() {
             _error = err.toString();
             _permissionPermanentlyDenied = false;
+            _selectedId = null;
+            _noteStartTime = null;
+            _hasLoggedForCurrentNote = false;
+            _hasEma = false;
+            _lastSelectedId = null;
           });
         },
+        cancelOnError: true,
       );
+      _isRecording = true;
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _permissionPermanentlyDenied = false;
+      });
     } catch (err) {
+      _isRecording = false;
       if (!mounted) return;
       setState(() {
         _error = err.toString();
         _permissionPermanentlyDenied = false;
+        _selectedId = null;
+        _noteStartTime = null;
+        _hasLoggedForCurrentNote = false;
+        _hasEma = false;
+        _lastSelectedId = null;
       });
     }
   }
 
-  // Helper: cents difference f vs target
-  static double _centsFromFreq(double f, double target) {
-    if (f <= 0 || target <= 0) return 0.0;
-    return 1200.0 * (math.log(f / target) / math.ln2);
+  Future<void> _stopAudio() {
+    if (_pendingStop != null) {
+      return _pendingStop!;
+    }
+    if (!_isRecording) {
+      return Future<void>.value();
+    }
+
+    final future = () async {
+      await _audioSub?.cancel();
+      _audioSub = null;
+      await _recorder.stop();
+      _isRecording = false;
+      _attackUntil = null;
+      _prevRms = 0.0;
+    }();
+
+    _pendingStop = future;
+    future.whenComplete(() {
+      _pendingStop = null;
+    });
+    return future;
   }
 
   // Helper: exponential moving average
@@ -149,8 +231,8 @@ class _TunerPageState extends State<TunerPage> {
     final key = buttonId;
     final fTarget = _stringFreq[buttonId] ?? 0.0;
 
-    final centsUi = (fTarget > 0 && dbg.f0Interp > 0)
-        ? _centsFromFreq(dbg.f0Interp, fTarget)
+    final hzUi = (fTarget > 0 && dbg.f0Interp > 0)
+        ? (dbg.f0Interp - fTarget)
         : double.nan;
 
     debugPrint(
@@ -160,7 +242,7 @@ class _TunerPageState extends State<TunerPage> {
       'f_peak=${dbg.f0Interp.toStringAsFixed(3)} '
       'octFix=${dbg.octaveCorrected ? 1 : 0} '
       'f_med=${(_frequency > 0 ? _frequency : dbg.f0Interp).toStringAsFixed(3)} '
-      'cents_ui=${centsUi.toStringAsFixed(1)} '
+      'deltaHz=${hzUi.toStringAsFixed(2)} '
       'RMS=${dbg.rms.toStringAsFixed(4)} '
       'dBFS=${dbg.dbfs.toStringAsFixed(1)} '
       'conf=${dbg.confidence.toStringAsFixed(2)} '
@@ -181,7 +263,7 @@ class _TunerPageState extends State<TunerPage> {
     final now = DateTime.now();
     final double currentRmsRaw = _computeRms(pcm16Le);
     final double currentDb = 20.0 * math.log(currentRmsRaw + 1e-12) / math.ln10;
-    
+
     if (currentDb - _prevRms > 6.0 /* dB jump */) {
       _attackUntil = now.add(const Duration(milliseconds: 150));
     }
@@ -192,75 +274,98 @@ class _TunerPageState extends State<TunerPage> {
       return;
     }
 
-    // Use targeted mode when a string is selected, otherwise use regular mode
-    final double? target = _selectedId != null ? _stringFreq[_selectedId!] : null;
-    
-    final PitchResult? resultNullable;
-    if (_selectedId != null && target != null) {
-      // Pressed-note mode: use THS search
-      resultNullable = _engine.processPcm16LeTargeted(
+    if (_selectedId == null) {
+      return;
+    }
+    final double? target = _stringFreq[_selectedId!];
+    if (target == null) {
+      return;
+    }
+
+    late double uiF0;
+    late double uiConfidence;
+    late double uiRms;
+    late String uiNote;
+
+    if (_algo == PitchAlgo.advanced) {
+      final adv.PitchResult? resultNullable = _advancedEngine.processPcm16LeTargeted(
         pcm16Le,
         fTarget: target,
       );
+
+      if (resultNullable == null || !mounted) return;
+      final adv.PitchResult result = resultNullable;
+
+      if (_selectedId != _lastSelectedId) {
+        _advancedEngine.resetSmoother();
+        _hasEma = false;
+        _lastSelectedId = _selectedId;
+      } else if (_frequency > 0 &&
+          (result.f0 - _frequency).abs() / math.max(result.f0, 1e-9) > 0.12) {
+        _advancedEngine.resetSmoother();
+      }
+
+      uiF0 = result.f0;
+      uiConfidence = result.confidence;
+      uiRms = result.rms;
+      uiNote = result.note;
     } else {
-      // Regular mode: wide-band HPS
-      resultNullable = _engine.processPcm16Le(
-        pcm16Le,
-        targetHz: null,
-        narrowSearchToTarget: false,
-        targetHarmTol: 0.06,
+      final int len = pcm16Le.lengthInBytes ~/ 2;
+      final bd = pcm16Le.buffer.asByteData();
+      final mono = Float64List(len);
+      for (int i = 0; i < len; i++) {
+        mono[i] = bd.getInt16(i * 2, Endian.little) / 32768.0;
+      }
+
+      final simple.PitchResult simpleRes = _simpleEngine.processFrame(
+        mono,
+        numChannels: 1,
+        sampleRate: simple.HPSPitchDetector.sampleRate,
       );
+
+      if (!simpleRes.voiced || simpleRes.f0Smoothed == null || !mounted) {
+        return;
+      }
+
+      uiF0 = simpleRes.f0Smoothed!;
+      final _NoteAndCents noteAndCents = _freqToNote(uiF0);
+      uiNote = noteAndCents.name;
+      uiConfidence = ((simpleRes.dbLevel + 60.0) / 60.0).clamp(0.0, 1.0);
+      uiRms = currentRmsRaw;
     }
 
-    if (resultNullable == null || !mounted) return;
-    
-    // Now we know result is non-null
-    final result = resultNullable;
-
-    // Reset smoother on key change or on very large jumps (>12% frame-to-frame)
-    if (_selectedId != _lastSelectedId) {
-      _engine.resetSmoother();
-      _hasEma = false; // reset EMA on key change
-      _lastSelectedId = _selectedId;
-    } else if (_frequency > 0 &&
-        (result.f0 - _frequency).abs() / math.max(result.f0, 1e-9) > 0.12) {
-      _engine.resetSmoother();
-    }
-
-    // Check if 5 seconds have passed since note was pressed, and log if so
-    if (_selectedId != null && 
-        _noteStartTime != null && 
+    if (_algo == PitchAlgo.advanced &&
+        _selectedId != null &&
+        _noteStartTime != null &&
         !_hasLoggedForCurrentNote) {
       final elapsed = DateTime.now().difference(_noteStartTime!);
       if (elapsed.inSeconds >= 5) {
         _logCurrentStats(_selectedId!);
-        _hasLoggedForCurrentNote = true; // log only once per press
+        _hasLoggedForCurrentNote = true;
       }
     }
 
-    // Compute UI cents: if a string is selected, show deviation vs that target
-    double centsRaw = result.cents;
-    if (target != null) {
-      centsRaw = _centsFromFreq(result.f0, target).clamp(-100.0, 100.0);
+    double hzDeltaRaw = 0.0;
+    final double referenceHz = target;
+    if (referenceHz > 0) {
+      hzDeltaRaw = (uiF0 - referenceHz).clamp(-25.0, 25.0);
     }
 
-    // EMA smoothing on cents (τ ≈ 200 ms). If hop is ~85 ms => alpha ~ 0.22
     const double alpha = 0.22;
     if (_hasEma) {
-      _centsEma = _ema(_centsEma, centsRaw, alpha);
+      _hzDeltaEma = _ema(_hzDeltaEma, hzDeltaRaw, alpha);
     } else {
-      _centsEma = centsRaw;
+      _hzDeltaEma = hzDeltaRaw;
       _hasEma = true;
     }
 
-    // Lock display only when stable and confident
-    if (result.confidence >= 0.55) {
+    if (uiConfidence >= 0.55) {
       setState(() {
-        _cents = _centsEma;
-        _confidence = result.confidence.clamp(0.0, 1.0).toDouble();
-        _rms = result.rms;
-        _frequency = result.f0;
-        _note = result.note;
+        _hzDelta = _hzDeltaEma;
+        _confidence = uiConfidence.clamp(0.0, 1.0);
+        _rms = uiRms;
+        _frequency = uiF0;
+        _note = uiNote.isEmpty ? '-' : uiNote;
         _error = null;
       });
     }
@@ -299,18 +404,27 @@ class _TunerPageState extends State<TunerPage> {
         height: 42,
         child: ElevatedButton(
           onPressed: () {
+            final bool wasSelected = _selectedId == id;
             setState(() {
-              if (_selectedId == id) {
+              if (wasSelected) {
                 _selectedId = null;
-                _noteStartTime = null; // reset timing when unselecting
+                _noteStartTime = null;
                 _hasLoggedForCurrentNote = false;
+                _lastSelectedId = null;
               } else {
                 _selectedId = id;
-                _engine.resetSmoother();   // reset smoothing when picking a new string
-                _noteStartTime = DateTime.now(); // start timing for this note
-                _hasLoggedForCurrentNote = false; // reset log flag
+                _advancedEngine.resetSmoother();
+                _simpleEngine.clearHistory();
+                _hasEma = false;
+                _noteStartTime = DateTime.now();
+                _hasLoggedForCurrentNote = false;
               }
             });
+            if (wasSelected) {
+              unawaited(_stopAudio());
+            } else {
+              unawaited(_startAudio());
+            }
             if (onPressed != null) onPressed();
           },
           style: ElevatedButton.styleFrom(
@@ -335,24 +449,6 @@ class _TunerPageState extends State<TunerPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Tuner'),
-        actions: [
-          IconButton(
-            tooltip: 'Calibrate 440→fs',
-            onPressed: () {
-              // Quick in-app helper:
-              // If you play 440 Hz and the app shows f_meas, set correction = 440/f_meas.
-              final fMeas = _frequency;
-              if (fMeas > 0) {
-                final corr = (440.0 / fMeas);
-                _engine.setSampleRateCorrection((_engine.sampleRateCorrection * corr));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Sample-rate correction set to ${_engine.sampleRateCorrection.toStringAsFixed(6)}')),
-                );
-              }
-            },
-            icon: const Icon(Icons.tune),
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -365,7 +461,7 @@ class _TunerPageState extends State<TunerPage> {
               height: 140,
               width: double.infinity,
               child: NeedleGauge(
-                cents: _cents,
+                hzDelta: _hzDelta,
                 confidence: _confidence,
               ),
             ),
@@ -400,6 +496,41 @@ class _TunerPageState extends State<TunerPage> {
                 child: const Text('Avaa asetukset'),
               ),
             ),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ChoiceChip(
+                  label: const Text('Simple (HPS)'),
+                  selected: _algo == PitchAlgo.simple,
+                  onSelected: (_) {
+                    setState(() {
+                      _algo = PitchAlgo.simple;
+                      _advancedEngine.resetSmoother();
+                      _simpleEngine.clearHistory();
+                      _hasEma = false;
+                    });
+                  },
+                ),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  label: const Text('Advanced+'),
+                  selected: _algo == PitchAlgo.advanced,
+                  onSelected: (_) {
+                    setState(() {
+                      _algo = PitchAlgo.advanced;
+                      _advancedEngine.resetSmoother();
+                      _simpleEngine.clearHistory();
+                      _hasEma = false;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
 
           const Spacer(flex: 1),
 
