@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
-/// Neulakello viritykselle (cents [-50, +50])
+/// Neulakello viritykselle (Hz delta [-25, +25])
 class NeedleGauge extends StatelessWidget {
-  final double cents;
+  final double hzDelta;
   final double confidence;
 
   const NeedleGauge({
     super.key,
-    required this.cents,
+    required this.hzDelta,
     required this.confidence,
   });
 
@@ -17,7 +17,7 @@ class NeedleGauge extends StatelessWidget {
     return CustomPaint(
       size: const Size(300, 200),
       painter: _NeedleGaugePainter(
-        cents: cents.clamp(-50.0, 50.0),
+        hzDelta: hzDelta.clamp(-25.0, 25.0),
         confidence: confidence,
       ),
     );
@@ -25,11 +25,11 @@ class NeedleGauge extends StatelessWidget {
 }
 
 class _NeedleGaugePainter extends CustomPainter {
-  final double cents;
+  final double hzDelta;
   final double confidence;
 
   _NeedleGaugePainter({
-    required this.cents,
+    required this.hzDelta,
     required this.confidence,
   });
 
@@ -90,11 +90,12 @@ class _NeedleGaugePainter extends CustomPainter {
 
     // Neula
     if (confidence > 0.3) {
-      // Map [-50, +50] cents onto [π, 2π] semicircle with 0 at 1.5π (straight up)
-      // cents = -50 → angle = π (left)
-      // cents = 0   → angle = 1.5π (up)
-      // cents = +50 → angle = 2π (right)
-      final needleAngle = 1.5 * math.pi + (cents / 50.0) * 0.5 * math.pi;
+      // Map [-25, +25] Hz onto [π, 2π] semicircle with 0 at 1.5π (straight up)
+      // hzDelta = -25 → angle = π (left)
+      // hzDelta = 0   → angle = 1.5π (up)
+      // hzDelta = +25 → angle = 2π (right)
+      final normalized = (hzDelta / 25.0).clamp(-1.0, 1.0);
+      final needleAngle = 1.5 * math.pi + normalized * 0.5 * math.pi;
       
       // Make the tip land close to the arc edge (leave tiny 2px margin)
       final needleLength = radius - arcStroke / 2 - 2;
@@ -115,16 +116,16 @@ class _NeedleGaugePainter extends CustomPainter {
       canvas.drawCircle(needleEnd, 6, Paint()..color = Colors.red.shade700);
     }
 
-    // Tekstit: -50, 0, +50
+    // Tekstit: -25 Hz, 0, +25 Hz
     final textStyle = TextStyle(
       color: Colors.grey.shade700,
       fontSize: 14,
       fontWeight: FontWeight.bold,
     );
 
-    _drawText(canvas, '-50', Offset(center.dx - radius - 20, center.dy), textStyle);
+    _drawText(canvas, '-25 Hz', Offset(center.dx - radius - 20, center.dy), textStyle);
     _drawText(canvas, '0', Offset(center.dx, center.dy - radius - 30), textStyle);
-    _drawText(canvas, '+50', Offset(center.dx + radius + 10, center.dy), textStyle);
+    _drawText(canvas, '+25 Hz', Offset(center.dx + radius + 10, center.dy), textStyle);
   }
 
   void _drawText(Canvas canvas, String text, Offset position, TextStyle style) {
@@ -141,6 +142,6 @@ class _NeedleGaugePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_NeedleGaugePainter oldDelegate) {
-    return cents != oldDelegate.cents || confidence != oldDelegate.confidence;
+    return hzDelta != oldDelegate.hzDelta || confidence != oldDelegate.confidence;
   }
 }
