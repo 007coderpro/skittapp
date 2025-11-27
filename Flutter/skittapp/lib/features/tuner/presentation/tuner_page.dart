@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:skittapp/core/audio/audio_recorder.dart';
 import 'package:skittapp/features/tuner/application/pitch_engine.dart' as adv;
-import 'package:skittapp/features/tuner/application/pitch_engine_python.dart'
+import 'package:skittapp/features/tuner/application/pitch_engine_HPS.dart'
   as simple;
 import 'package:skittapp/features/tuner/application/debug.dart';
 
@@ -321,6 +321,14 @@ class _TunerPageState extends State<TunerPage> {
         mono,
         numChannels: 1,
         sampleRate: simple.HPSPitchDetector.sampleRate,
+        searchMinFreq: math.max(
+          simple.HPSPitchDetector.minFreq,
+          target * 0.7,
+        ),
+        searchMaxFreq: math.min(
+          simple.HPSPitchDetector.maxFreq,
+          target * 1.3,
+        ),
       );
 
       if (!simpleRes.voiced || simpleRes.f0Smoothed == null || !mounted) {

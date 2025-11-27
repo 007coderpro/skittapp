@@ -118,7 +118,11 @@ class HPSPitchDetector {
     int sampleRate = HPSPitchDetector.sampleRate,
     int windowLength = HPSPitchDetector.windowLength,
     int partials = HPSPitchDetector.partials,
+    double? searchMinFreq,
+    double? searchMaxFreq,
   }) {
+    final double bandMin = searchMinFreq ?? minFreq;
+    final double bandMax = searchMaxFreq ?? maxFreq;
     // pad / truncate
     final data = _padOrTruncate(frame, windowLength);
 
@@ -149,11 +153,11 @@ class HPSPitchDetector {
 
     // rajataan kitara-alueelle
     int startIdx = 0;
-    while (startIdx < nFreqs && freqs[startIdx] < minFreq) {
+    while (startIdx < nFreqs && freqs[startIdx] < bandMin) {
       startIdx++;
     }
     int endIdx = nFreqs - 1;
-    while (endIdx > startIdx && freqs[endIdx] > maxFreq) {
+    while (endIdx > startIdx && freqs[endIdx] > bandMax) {
       endIdx--;
     }
     if (startIdx >= endIdx) {
@@ -194,11 +198,8 @@ class HPSPitchDetector {
     }
 
     // jos ollaan alle kitara-alueen, nostetaan oktaaveja ylös
-    while (f0 > 0 && f0 < minFreq) {
-      f0 *= 2.0;
-    }
-    if (f0 > maxFreq) {
-      f0 = maxFreq;
+    if (f0 < bandMin || f0 > bandMax) {
+      return 0.0;
     }
 
     return f0;
@@ -227,6 +228,8 @@ class HPSPitchDetector {
     Float64List audioData, {
     int numChannels = 1,
     int sampleRate = HPSPitchDetector.sampleRate,
+    double? searchMinFreq,
+    double? searchMaxFreq,
   }) {
     // mono-kanava (ensimmäinen kanava, kuten Pythonissa indata[:, 0])
     Float64List mono;
@@ -249,6 +252,8 @@ class HPSPitchDetector {
         sampleRate: sampleRate,
         windowLength: windowLength,
         partials: partials,
+        searchMinFreq: searchMinFreq,
+        searchMaxFreq: searchMaxFreq,
       );
       final f0Smoothed = smoothF0(f0Raw);
 
